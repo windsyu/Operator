@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -10,6 +12,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
+	"os"
 )
 
 func main() {
@@ -25,6 +28,7 @@ func main() {
 	}
 
 	//3.create deployment
+
 	deployClient := clientset.AppsV1().Deployments(corev1.NamespaceDefault)
 	CreateDeploy(deployClient)
 
@@ -101,7 +105,7 @@ func UpdateDeploy(client appsresv1.DeploymentInterface) {
 		deploy, err := client.Get(context.Background(), "deploy-nginx-demo", v1.GetOptions{})
 		if err != nil {
 			klog.Errorf("can't get deployment, err:%v", err)
-			return nil
+			return err
 		}
 		replicas := int32(1)
 		deploy.Spec.Replicas = &replicas
@@ -115,18 +119,45 @@ func UpdateDeploy(client appsresv1.DeploymentInterface) {
 	})
 
 	if err != nil {
-
+		klog.Errorf("update deployment error, err:%v", err)
+	} else {
+		klog.Infof("update deployment success")
 	}
 }
 
 func prompt() {
-
+	fmt.Printf("->Press Return key to continue")
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		break
+	}
+	if err := scanner.Err(); err != nil {
+		panic(err)
+	}
+	fmt.Println()
 }
 
 func ListDeploy(client appsresv1.DeploymentInterface) {
+	klog.Info("ListDeploy.................")
+	deplist, err := client.List(context.Background(), v1.ListOptions{})
+	if err != nil {
+		klog.Errorf("list deployment error,err:%v", err)
+		return
+	}
 
+	for _, dep := range deplist.Items {
+		klog.Infof("deploy name:%s, replicas:%d, container image:%s", dep.Name, *dep.Spec.Replicas, dep.Spec.Template.Spec.Containers[0].Image)
+
+	}
 }
 
 func DeleteDeploy(client appsresv1.DeploymentInterface) {
-
+	klog.Info("DeleteDeploy.........................")
+	deletePolicy := v1.DeletePropagationForeground
+	err := client.Delete(context.Background(), "deploy-nginx-demo", v1.DeleteOptions{PropagationPolicy: &deletePolicy})
+	if err != nil {
+		klog.Errorf("delete deployment error, err:%v", err)
+	} else {
+		klog.Info("delete deployment success")
+	}
 }
