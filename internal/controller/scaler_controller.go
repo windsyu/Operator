@@ -74,20 +74,58 @@ func (r *ScalerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	log.Info(fmt.Sprintf("Current Time: %d", currentHour))
 
 	if currentHour >= startTime && currentHour < endTime {
-		log.Info("ScalerDeploy Function Called")
-		err := r.ScalerDeploy(scaler, replicas, ctx)
-		if err != nil {
-			scaler.Status.Status = apiv1alpha1.FAILED
-			return ctrl.Result{}, err
+		if scaler.Status.Status == "" {
+			log.Info("Status is nil; Transition to PENDING")
+			scaler.Status.Status = apiv1alpha1.PENDING
+			if err := r.Status().Update(ctx, scaler); err != nil {
+				return ctrl.Result{}, client.IgnoreNotFound(err)
+			}
+		} else if scaler.Status.Status == apiv1alpha1.PENDING {
+			log.Info("ScalerDeploy Function Called")
+			err := r.ScalerDeploy(scaler, replicas, ctx)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+		} else if scaler.Status.Status == apiv1alpha1.SCALED {
+			log.Info("restoreDeployment Function Called")
+			if err := r.restoreDeployment(scaler, ctx); err != nil {
+				return ctrl.Result{RequeueAfter: time.Duration(10 * time.Second)}, client.IgnoreNotFound(err)
+			}
+		} else if scaler.Status.Status == apiv1alpha1.RESTORED {
+			log.Info("Status RESTORED")
+			return ctrl.Result{RequeueAfter: time.Duration(10 * time.Second)}, nil
 		}
 
-		scaler.Status.Status = apiv1alpha1.SCALED
-		r.Status().Update(ctx, scaler)
 	}
 
 	// TODO(user): your logic here
 
 	return ctrl.Result{RequeueAfter: time.Duration(10 * time.Second)}, nil
+}
+
+func (r *ScalerReconciler) restoreDeployment(scaler *apiv1alpha1.Scaler, ctx context.Context) error {
+	for name, originInfo := range originalDeployInfo {
+		deployment := &appsv1.Deployment{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      name,
+			Namespace: originInfo.Namespace,
+		}, deployment); err != nil {
+			return err
+		}
+
+		if *deployment.Spec.Replicas != int32(originInfo.Replicas) {
+			*deployment.Spec.Replicas = int32(originInfo.Replicas)
+			if err := r.Update(ctx, deployment); err != nil {
+				return err
+			}
+		}
+	}
+	scaler.Status.Status = apiv1alpha1.RESTORED
+	if err := r.Status().Update(ctx, scaler); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *ScalerReconciler) ScalerDeploy(scaler *apiv1alpha1.Scaler, replicas int, ctx context.Context) error {
@@ -100,12 +138,17 @@ func (r *ScalerReconciler) ScalerDeploy(scaler *apiv1alpha1.Scaler, replicas int
 		if err != nil {
 			return err
 		}
+		//更新副本数
 		if *deployment.Spec.Replicas != int32(replicas) {
 			*deployment.Spec.Replicas = int32(replicas)
 			err := r.Update(ctx, deployment)
 			if err != nil {
 				return err
 			}
+		}
+		scaler.Status.Status = apiv1alpha1.SCALED
+		if err := r.Status().Update(ctx, scaler); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -144,7 +187,8 @@ func (r *ScalerReconciler) AddAnotations(scaler *apiv1alpha1.Scaler, ctx context
 
 	}
 	//update scaler的annotations
-
+	scaler.ObjectMeta.Annotations = annotaions
+	r.Update(ctx, scaler)
 	return nil
 }
 

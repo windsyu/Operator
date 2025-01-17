@@ -7,11 +7,9 @@ metadata:
   name: scaler-sample
 spec:
   # TODO(user): Add fields here
-  start: 
+  start: 16
   end: 19
-  replicas: 3
+  replicas: 2
   deploys:
     - name: abc
-      namespace: default
-    - name: def
       namespace: default
